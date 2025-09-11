@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Calendário de Reservas de Chromebooks</title>
+<style>
+body {
+  font-family: Arial, sans-serif;
+  background: #f0f0f0;
+  margin: 0;
+  padding: 20px;
+}
+h2 {
+  text-align: center;
+  margin-bottom: 10px;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+thead {
+  background: #075E54;
+  color: white;
+}
+th, td {
+  border: 1px solid #ccc;
+  padding: 4px;
+  text-align: left;
+  vertical-align: top;
+  font-size: 12px;
+  min-width: 80px;
+  height: 100px;
+}
+td {
+  background: #e5ddd5;
+}
+.reserva {
+  color: white;
+  border-radius: 4px;
+  margin: 1px 0;
+  padding: 1px 2px;
+  font-size: 11px;
+  cursor: pointer;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reserva:hover {
+  opacity: 0.9;
+}
+.scroll-container {
+  overflow-x: auto;
+}
+.calendar-header {
+  text-align: center;
+  margin-bottom: 10px;
+}
+.modal {
+  display: none;
+  position: fixed;
+  z-index: 1;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  background-color: rgba(0, 0, 0, 0.4);
+  padding-top: 60px;
+}
+.modal-content {
+  background-color: #fefefe;
+  margin: 5% auto;
+  padding: 20px;
+  border: 1px solid #888;
+  width: 80%;
+}
+.close {
+  color: #aaa;
+  float: right;
+  font-size: 28px;
+  font-weight: bold;
+}
+.close:hover, .close:focus {
+  color: black;
+  text-decoration: none;
+  cursor: pointer;
+}
+#totalsBar { text-align:center; margin-bottom:10px; }
+.badge { display:inline-block; padding:6px 10px; border-radius:6px; background:#25d366; color:#fff; margin:0 6px; }
+.cancel-btn { background:#d9534f; color:#fff; border:none; padding:8px 12px; border-radius:6px; cursor:pointer; }
+.cancel-btn:hover { background:#c9302c; }
+</style>
+</head>
+<body>
+
+<h2>Calendário de Reservas de Chromebooks</h2>
+<div id="totalsBar">
+  <span class="badge">Total reservados (hoje): <strong id="totalReservados">0</strong></span>
+  <span class="badge" style="background:#888;">Total livres (hoje): <strong id="totalLivres">0</strong></span>
+</div>
+<div class="calendar-header" id="calendarMonth"></div>
+<div class="scroll-container">
+<table>
+  <thead>
+    <tr>
+      <th>Dom</th>
+      <th>Seg</th>
+      <th>Ter</th>
+      <th>Qua</th>
+      <th>Qui</th>
+      <th>Sex</th>
+      <th>Sáb</th>
+    </tr>
+  </thead>
+  <tbody id="calendarBody"></tbody>
+</table>
+</div>
+
+<!-- Modal para exibir detalhes da reserva -->
+<div id="reservationModal" class="modal">
+  <div class="modal-content">
+    <span class="close" id="closeModal">&times;</span>
+    <h3>Detalhes da Reserva</h3>
+    <p><strong>Nome do Professor:</strong> <span id="professorName"></span></p>
+    <p><strong>Data da Reserva:</strong> <span id="reservationDate"></span></p>
+    <p><strong>Horários Reservados:</strong> <span id="reservationTimes"></span></p>
+    <p><strong>Quantidade de Chromebooks:</strong> <span id="reservationQuantity"></span></p>
+    <div id="perHorarioInfo"></div>
+    <p><strong>Total de Chromebooks reservados (soma real do dia):</strong> <span id="totalReservedModal"></span></p>
+    <p><strong>Total de Chromebooks livres (soma real do dia):</strong> <span id="totalFreeModal"></span></p>
+    <button id="cancelReservationBtn" class="cancel-btn">Cancelar Reserva</button>
+  </div>
+</div>
+
+<script>
+const MAX_CHROMEBOOKS = 86;
+const horarios = ['07:20','08:05','08:50','09:55','10:40','11:25','13:45','14:30','15:35','16:20','17:05'];
+
+function hojeStr(){
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function gerarCor(nome) {
+  let hash = 0;
+  for (let i = 0; i < nome.length; i++) {
+    hash = nome.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return `hsl(${hash % 360}, 70%, 60%)`;
+}
+
+function isoToBR(iso) {
+  if(!iso) return '';
+  const parts = iso.split('-');
+  if(parts.length !== 3) return iso;
+  return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}
+
+function buildReservasPorDataHorarioPara(dataISO) {
+  const mapa = {};
+  const reservasExistentes = JSON.parse(localStorage.getItem('reservas') || '[]');
+  reservasExistentes.forEach(res => {
+    if (res.dataFim === dataISO) {
+      (res.horarios || []).forEach(h => {
+        const key = `${res.dataFim}-${h}`;
+        mapa[key] = (mapa[key] || 0) + (res.quantidade || 0);
+      });
+    }
+  });
+  return mapa;
+}
+
+function montarCalendario(){
+  const tbody = document.getElementById('calendarBody'); 
+  tbody.innerHTML = '';
+
+  const reservas = JSON.parse(localStorage.getItem('reservas') || '[]'); 
+  const dataAtual = new Date();
+  const ano = dataAtual.getFullYear();
+  const mes = dataAtual.getMonth();
+
+  const primeiroDia = new Date(ano, mes, 1);
+  const ultimoDia = new Date(ano, mes + 1, 0);
+  const diasNoMes = ultimoDia.getDate();
+
+  document.getElementById('calendarMonth').textContent = `${primeiroDia.toLocaleString('pt-BR', {month: 'long'})} ${ano}`;
+
+  let tr = document.createElement('tr');
+  for (let i = 0; i < primeiroDia.getDay(); i++) {
+    tr.appendChild(document.createElement('td'));
+  }
+
+  for (let dia = 1; dia <= diasNoMes; dia++) {
+    if (tr.children.length === 7) {
+      tbody.appendChild(tr);
+      tr = document.createElement('tr');
+    }
+    const td = document.createElement('td');
+    const dataStr = `${ano}-${String(mes + 1).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+    const divDia = document.createElement('div');
+    divDia.style.fontWeight = 'bold';
+    divDia.textContent = dia;
+    td.appendChild(divDia);
+
+    const reservasDia = reservas.filter(r => r.dataFim === dataStr);
+    if (reservasDia.length > 0) {
+      horarios.forEach(hor => {
+        reservasDia.forEach(r => {
+          if (r.horarios && r.horarios.includes(hor)) {
+            const div = document.createElement('div');
+            div.classList.add('reserva');
+            div.title = `Professor: ${r.professor}\nQuantidade: ${r.quantidade}\nData: ${r.dataFim}`;
+            div.textContent = `${hor} ${r.professor} (${r.quantidade})`;
+            div.style.backgroundColor = gerarCor(r.professor);
+            div.style.color = '#fff';
+            div.onclick = function() { openModal(r); };
+            td.appendChild(div);
+          }
+        });
+      });
+    }
+
+    tr.appendChild(td);
+  }
+
+  while (tr.children.length < 7) {
+    tr.appendChild(document.createElement('td'));
+  }
+  tbody.appendChild(tr);
+
+  atualizarTotaisDia(reservas);
+}
+
+// Função corrigida: não multiplica quantidade pelo número de horários
+function atualizarTotaisDia(reservas) {
+  const hoje = hojeStr();
+  const reservasHoje = reservas.filter(r => r.dataFim === hoje);
+
+  let reservedHoje = 0;
+  reservasHoje.forEach(r => {
+    reservedHoje += r.quantidade || 0;
+  });
+
+  const freeHoje = Math.max(0, MAX_CHROMEBOOKS - reservedHoje);
+
+  document.getElementById('totalReservados').textContent = reservedHoje;
+  document.getElementById('totalLivres').textContent = freeHoje;
+}
+
+function openModal(reservation) {
+  document.getElementById('professorName').textContent = reservation.professor || '---';
+  document.getElementById('reservationDate').textContent = isoToBR(reservation.dataFim);
+  document.getElementById('reservationTimes').textContent = (reservation.horarios || []).join(', ');
+  document.getElementById('reservationQuantity').textContent = reservation.quantidade || 0;
+  
+  const perHorarioDiv = document.getElementById('perHorarioInfo');
+  perHorarioDiv.innerHTML = '';
+  const counts = buildReservasPorDataHorarioPara(reservation.dataFim);
+
+  let totalReserved = 0;
+  let totalFree = 0;
+  (reservation.horarios || []).forEach(h => {
+    const key = `${reservation.dataFim}-${h}`;
+    const reserved = counts[key] || 0;
+    const free = Math.max(0, MAX_CHROMEBOOKS - reserved);
+    totalReserved += reserved;
+    totalFree += free;
+
+    const p = document.createElement('p');
+    p.innerHTML = `<strong>${h}:</strong> Reservados: ${reserved} — Livres: ${free}`;
+    perHorarioDiv.appendChild(p);
+  });
+
+  document.getElementById('totalReservedModal').textContent = totalReserved;
+  document.getElementById('totalFreeModal').textContent = totalFree;
+
+  const cancelBtn = document.getElementById('cancelReservationBtn');
+  cancelBtn.setAttribute('data-reservation-id', reservation.id || '');
+  cancelBtn.onclick = function() {
+    const id = this.getAttribute('data-reservation-id');
+    cancelarReserva(id, reservation);
+  };
+
+  document.getElementById('reservationModal').style.display = "block";
+}
+
+function cancelarReserva(id, reservation) {
+  if (!confirm('Deseja realmente cancelar esta reserva?')) return;
+  let reservas = JSON.parse(localStorage.getItem('reservas') || '[]');
+  let idx = -1;
+  if (id) {
+    idx = reservas.findIndex(r => r.id === id);
+  }
+  if (idx === -1) {
+    idx = reservas.findIndex(r => r.professor === reservation.professor && r.dataFim === reservation.dataFim && r.quantidade === reservation.quantidade && JSON.stringify(r.horarios) === JSON.stringify(reservation.horarios));
+  }
+  if (idx !== -1) {
+    reservas.splice(idx,1);
+    localStorage.setItem('reservas', JSON.stringify(reservas));
+    alert('Reserva cancelada com sucesso.');
+    document.getElementById('reservationModal').style.display = 'none';
+    montarCalendario();
+  } else {
+    alert('Não foi possível localizar a reserva para cancelar.');
+  }
+}
+
+document.getElementById('closeModal').onclick = function() {
+  document.getElementById('reservationModal').style.display = "none";
+}
+
+montarCalendario();
+</script>
+
+</body>
+</html>
