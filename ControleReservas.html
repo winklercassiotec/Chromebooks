@@ -105,7 +105,12 @@ select { padding:6px 10px; border-radius:6px; border:1px solid #ccc; font-size:1
   <span class="badge">Total reservados (hoje): <strong id="totalReservados">0</strong></span>
   <span class="badge" style="background:#888;">Total livres (hoje): <strong id="totalLivres">0</strong></span>
 </div>
-<div class="calendar-header" id="calendarMonth"></div>
+
+<div class="calendar-header">
+  <div id="monthSelector"></div>
+  <div id="calendarMonth" style="margin-top:8px; font-weight:bold;"></div>
+</div>
+
 <div class="scroll-container">
 <table>
   <thead>
@@ -185,10 +190,7 @@ function montarDropdownMeses() {
   const hoje = new Date();
   const mesesSet = new Set();
 
-  // Mês atual
   mesesSet.add(`${hoje.getFullYear()}-${hoje.getMonth()}`);
-
-  // Meses com reservas
   reservas.forEach(r => {
     const d = new Date(r.dataFim);
     mesesSet.add(`${d.getFullYear()}-${d.getMonth()}`);
@@ -216,9 +218,9 @@ function montarDropdownMeses() {
     montarCalendario(dropdown.value);
   };
 
-  const header = document.getElementById('calendarMonth');
-  header.innerHTML = '';
-  header.appendChild(dropdown);
+  const container = document.getElementById('monthSelector');
+  container.innerHTML = '';
+  container.appendChild(dropdown);
 }
 
 function montarCalendario(mesAnoSelecionado){
@@ -227,6 +229,11 @@ function montarCalendario(mesAnoSelecionado){
 
   const reservas = JSON.parse(localStorage.getItem('reservas') || '[]'); 
   let ano, mes;
+
+  if(!mesAnoSelecionado){
+    const select = document.getElementById('mesSelecionado');
+    if(select) mesAnoSelecionado = select.value;
+  }
 
   if(mesAnoSelecionado){
     [ano, mes] = mesAnoSelecionado.split('-').map(Number);
@@ -240,9 +247,7 @@ function montarCalendario(mesAnoSelecionado){
   const ultimoDia = new Date(ano, mes + 1, 0);
   const diasNoMes = ultimoDia.getDate();
 
-  if(!mesAnoSelecionado){
-    document.getElementById('calendarMonth').textContent = `${primeiroDia.toLocaleString('pt-BR', {month: 'long'})} ${ano}`;
-  }
+  document.getElementById('calendarMonth').textContent = `${primeiroDia.toLocaleString('pt-BR', {month:'long', year:'numeric'})}`;
 
   let tr = document.createElement('tr');
   for (let i = 0; i < primeiroDia.getDay(); i++) tr.appendChild(document.createElement('td'));
@@ -336,9 +341,7 @@ function cancelarReserva(id, reservation) {
   if (!confirm('Deseja realmente cancelar esta reserva?')) return;
   let reservas = JSON.parse(localStorage.getItem('reservas') || '[]');
   let idx = -1;
-  if (id) {
-    idx = reservas.findIndex(r => r.id === id);
-  }
+  if (id) idx = reservas.findIndex(r => r.id === id);
   if (idx === -1) {
     idx = reservas.findIndex(r => r.professor === reservation.professor && r.dataFim === reservation.dataFim && r.quantidade === reservation.quantidade && JSON.stringify(r.horarios) === JSON.stringify(reservation.horarios));
   }
