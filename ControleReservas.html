@@ -95,6 +95,7 @@ td {
 .badge { display:inline-block; padding:6px 10px; border-radius:6px; background:#25d366; color:#fff; margin:0 6px; }
 .cancel-btn { background:#d9534f; color:#fff; border:none; padding:8px 12px; border-radius:6px; cursor:pointer; }
 .cancel-btn:hover { background:#c9302c; }
+select { padding:6px 10px; border-radius:6px; border:1px solid #ccc; font-size:14px; }
 </style>
 </head>
 <body>
@@ -179,43 +180,75 @@ function buildReservasPorDataHorarioPara(dataISO) {
   return mapa;
 }
 
-function montarCalendario(){
+function montarDropdownMeses() {
+  const reservas = JSON.parse(localStorage.getItem('reservas') || '[]');
+  const hoje = new Date();
+  const mesesSet = new Set();
+
+  // Mês atual
+  mesesSet.add(`${hoje.getFullYear()}-${hoje.getMonth()}`);
+
+  // Meses com reservas
+  reservas.forEach(r => {
+    const d = new Date(r.dataFim);
+    mesesSet.add(`${d.getFullYear()}-${d.getMonth()}`);
+  });
+
+  const sortedMeses = Array.from(mesesSet).sort((a,b) => {
+    const [ay, am] = a.split('-').map(Number);
+    const [by, bm] = b.split('-').map(Number);
+    return ay === by ? am - bm : ay - by;
+  });
+
+  const dropdown = document.createElement('select');
+  dropdown.id = 'mesSelecionado';
+
+  sortedMeses.forEach(mesStr => {
+    const [ano, mes] = mesStr.split('-').map(Number);
+    const option = document.createElement('option');
+    option.value = mesStr;
+    option.textContent = `${new Date(ano, mes).toLocaleString('pt-BR',{month:'long', year:'numeric'})}`;
+    if (ano === hoje.getFullYear() && mes === hoje.getMonth()) option.selected = true;
+    dropdown.appendChild(option);
+  });
+
+  dropdown.onchange = () => {
+    montarCalendario(dropdown.value);
+  };
+
+  const header = document.getElementById('calendarMonth');
+  header.innerHTML = '';
+  header.appendChild(dropdown);
+}
+
+function montarCalendario(mesAnoSelecionado){
   const tbody = document.getElementById('calendarBody'); 
   tbody.innerHTML = '';
 
   const reservas = JSON.parse(localStorage.getItem('reservas') || '[]'); 
-  const dataAtual = new Date();
-  let ano = dataAtual.getFullYear();
-  let mes = dataAtual.getMonth();
+  let ano, mes;
 
-  // Verifica se existe reserva no próximo mês
-  const ultimoDiaMesAtual = new Date(ano, mes + 1, 0);
-  const reservaFutura = reservas.some(r => new Date(r.dataFim) > ultimoDiaMesAtual);
-
-  if(reservaFutura){
-    mes = mes + 1;
-    if(mes > 11){ 
-      mes = 0;
-      ano++;
-    }
+  if(mesAnoSelecionado){
+    [ano, mes] = mesAnoSelecionado.split('-').map(Number);
+  } else {
+    const dataAtual = new Date();
+    ano = dataAtual.getFullYear();
+    mes = dataAtual.getMonth();
   }
 
   const primeiroDia = new Date(ano, mes, 1);
   const ultimoDia = new Date(ano, mes + 1, 0);
   const diasNoMes = ultimoDia.getDate();
 
-  document.getElementById('calendarMonth').textContent = `${primeiroDia.toLocaleString('pt-BR', {month: 'long'})} ${ano}`;
-
-  let tr = document.createElement('tr');
-  for (let i = 0; i < primeiroDia.getDay(); i++) {
-    tr.appendChild(document.createElement('td'));
+  if(!mesAnoSelecionado){
+    document.getElementById('calendarMonth').textContent = `${primeiroDia.toLocaleString('pt-BR', {month: 'long'})} ${ano}`;
   }
 
+  let tr = document.createElement('tr');
+  for (let i = 0; i < primeiroDia.getDay(); i++) tr.appendChild(document.createElement('td'));
+
   for (let dia = 1; dia <= diasNoMes; dia++) {
-    if (tr.children.length === 7) {
-      tbody.appendChild(tr);
-      tr = document.createElement('tr');
-    }
+    if (tr.children.length === 7) { tbody.appendChild(tr); tr = document.createElement('tr'); }
     const td = document.createElement('td');
     const dataStr = `${ano}-${String(mes + 1).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
     const divDia = document.createElement('div');
@@ -230,31 +263,23 @@ function montarCalendario(){
           if (r.horarios && r.horarios.includes(hor)) {
             const div = document.createElement('div');
             div.classList.add('reserva');
-            div.title = `Professor: ${r.professor}
-Quantidade: ${r.quantidade}
-Data: ${r.dataFim}`;
+            div.title = `Professor: ${r.professor}\nQuantidade: ${r.quantidade}\nData: ${r.dataFim}`;
             div.textContent = `${hor} ${r.professor} (${r.quantidade})`;
             div.style.backgroundColor = gerarCor(r.professor);
-            div.style.color = '#fff';
-            div.onclick = function() { openModal(r); };
+            div.onclick = () => openModal(r);
             td.appendChild(div);
           }
         });
       });
     }
-
     tr.appendChild(td);
   }
-
-  while (tr.children.length < 7) {
-    tr.appendChild(document.createElement('td'));
-  }
+  while(tr.children.length < 7) tr.appendChild(document.createElement('td'));
   tbody.appendChild(tr);
 
   atualizarTotaisDia(reservas);
 }
 
-// Função corrigida: não multiplica quantidade pelo número de horários
 function atualizarTotaisDia(reservas) {
   const hoje = hojeStr();
   const reservasHoje = reservas.filter(r => r.dataFim === hoje);
@@ -322,7 +347,7 @@ function cancelarReserva(id, reservation) {
     localStorage.setItem('reservas', JSON.stringify(reservas));
     alert('Reserva cancelada com sucesso.');
     document.getElementById('reservationModal').style.display = 'none';
-    montarCalendario();
+    montarCalendario(document.getElementById('mesSelecionado').value);
   } else {
     alert('Não foi possível localizar a reserva para cancelar.');
   }
@@ -332,6 +357,8 @@ document.getElementById('closeModal').onclick = function() {
   document.getElementById('reservationModal').style.display = "none";
 }
 
+// Inicialização
+montarDropdownMeses();
 montarCalendario();
 </script>
 
