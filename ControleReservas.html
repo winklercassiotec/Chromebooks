@@ -185,8 +185,20 @@ function montarCalendario(){
 
   const reservas = JSON.parse(localStorage.getItem('reservas') || '[]'); 
   const dataAtual = new Date();
-  const ano = dataAtual.getFullYear();
-  const mes = dataAtual.getMonth();
+  let ano = dataAtual.getFullYear();
+  let mes = dataAtual.getMonth();
+
+  // Verifica se existe reserva no próximo mês
+  const ultimoDiaMesAtual = new Date(ano, mes + 1, 0);
+  const reservaFutura = reservas.some(r => new Date(r.dataFim) > ultimoDiaMesAtual);
+
+  if(reservaFutura){
+    mes = mes + 1;
+    if(mes > 11){ 
+      mes = 0;
+      ano++;
+    }
+  }
 
   const primeiroDia = new Date(ano, mes, 1);
   const ultimoDia = new Date(ano, mes + 1, 0);
@@ -218,7 +230,9 @@ function montarCalendario(){
           if (r.horarios && r.horarios.includes(hor)) {
             const div = document.createElement('div');
             div.classList.add('reserva');
-            div.title = `Professor: ${r.professor}\nQuantidade: ${r.quantidade}\nData: ${r.dataFim}`;
+            div.title = `Professor: ${r.professor}
+Quantidade: ${r.quantidade}
+Data: ${r.dataFim}`;
             div.textContent = `${hor} ${r.professor} (${r.quantidade})`;
             div.style.backgroundColor = gerarCor(r.professor);
             div.style.color = '#fff';
