@@ -8,7 +8,7 @@
   body { font-family: Arial, sans-serif; margin:0; padding:0; background:#ece5dd; }
   .chat-container { display:flex; flex-direction:column; max-width:480px; height:100vh; margin:0 auto; border:1px solid #ccc; background:#fff; }
   .messages { flex:1; overflow-y:auto; padding:10px; display:flex; flex-direction:column; background:#e5ddd5; }
-  .message { margin:5px 0; padding:10px 14px; border-radius:18px; max-width:75%; word-wrap:break-word; line-height:1.4; }
+  .message { margin:5px 0; padding:10px 14px; border-radius:18px; max-width:75%; word-wrap:break-word; line-height:1.4; white-space:pre-wrap;}
   .from-system { background:#ffffff; align-self:flex-start; }
   .from-user { background:#dcf8c6; align-self:flex-end; }
   .option-btn { background:#25d366; color:#fff; border:none; border-radius:20px; padding:8px 14px; cursor:pointer; margin-top:5px; display:inline-block; user-select:none; transition:background-color 0.3s ease; }
@@ -19,6 +19,7 @@
   .input-container input:disabled { background:#e5e5e5; cursor:not-allowed; }
   .input-container button { margin-left:8px; border:none; background:#25d366; color:white; border-radius:50%; width:40px; height:40px; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:18px; }
   .input-container button:disabled { background:#9fd9a0; cursor:not-allowed; }
+  .small-note { font-size:12px; color:#333; margin-top:6px; }
 </style>
 </head>
 <body>
@@ -39,11 +40,13 @@ const sendBtn = document.getElementById('sendBtn');
 const MAX_CHROMEBOOKS = 86;
 let state = 0;
 let professor = {nome:'', cpf:'', telefone:'', email:''};
-let reserva = {quantidade: 0, dataFim: '', horarios: []};
-// reservasPorDataHorario será recalculado sempre que necessário para evitar acumulação
-let reservasPorDataHorario = {}; // Armazenar reservas por data-horário quando necessário
+let reserva = {quantidade: 0, dataFim: '', horarios: [], ambiente: 'Chromebooks'};
+let reservasPorDataHorario = {};
+let selectedAmbiente = 'Chromebooks';
 
-// Função para adicionar mensagens no chat
+const AMBIENTES = ['Chromebooks','Cozinha','Tele Sala','Sala de Atendimento I','Sala de Atendimento II'];
+const horarios = ['07:20','08:05','08:50','09:55','10:40','11:25','13:45','14:30','15:35','16:20','17:05'];
+
 function addMessage(text, from='system'){
   const div = document.createElement('div');
   div.classList.add('message', from === 'system' ? 'from-system' : 'from-user');
@@ -57,6 +60,7 @@ function createInput(placeholder, callback){
   chatInput.value = '';
   chatInput.placeholder = placeholder;
   sendBtn.disabled = false;
+  sendBtn.onclick = null;
   sendBtn.onclick = () => {
     if(chatInput.value.trim() === '') return;
     const val = chatInput.value.trim();
@@ -68,41 +72,46 @@ function createInput(placeholder, callback){
   chatInput.focus();
 }
 
-// Formatação e validação de CPF
+function onlyDigits(s){ return (s||'').replace(/\D/g,''); }
 function formatCPF(digits){
   return digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
 }
+function brToISO(dateStr){
+  const [dia, mes, ano] = dateStr.split('/');
+  return `${ano}-${String(mes).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;
+}
+function isoToBR(iso){
+  if(!iso) return '';
+  const parts = iso.split('-');
+  if(parts.length !== 3) return iso;
+  return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}
 
-// Função para processar a entrada do CPF
 function cpfInput(cpfRaw){
-  const digits = (cpfRaw || '').replace(/\D/g, '');
+  const digits = onlyDigits(cpfRaw);
   if (digits.length !== 11) {
     addMessage('CPF inválido. Deve conter 11 dígitos. Tente novamente.');
     createInput('CPF (somente números)', cpfInput);
     return;
   }
   const maskedCPF = formatCPF(digits);
-
-  // Procurar professor pelo CPF (comparando apenas dígitos)
   let professores = JSON.parse(localStorage.getItem('professores') || '[]');
-  const profExistente = professores.find(p => (p.cpf || '').replace(/\D/g,'') === digits);
+  const profExistente = professores.find(p => onlyDigits(p.cpf || '') === digits);
   
   if(profExistente){
     professor = {...profExistente};
     addMessage(`Olá ${professor.nome}! Vamos continuar com a sua reserva.`);
-    state = 2;
-    askDate(); // Solicita a data da reserva
+    showProfessorReservations(digits);
+    askSelectAmbiente();
   } else {
-    // Guardar o CPF já mascarado para o novo cadastro
     professor.cpf = maskedCPF;
     addMessage(`${maskedCPF}`, 'user');
-    state = 11;  // Estado de cadastro
     addMessage('Você não está cadastrado. Vamos começar o seu cadastro! Digite seu nome completo:');
+    state = 11;
     createInput('Nome completo', nome => nextStep(nome));
   }
 }
 
-// Função para processar a entrada de dados
 function nextStep(input){
   switch(state){
     case 0:
@@ -118,18 +127,16 @@ function nextStep(input){
       }
       break;
 
-    case 11:  // Fluxo de cadastro de novo professor - aqui o nome já foi lido
+    case 11:
       professor.nome = input;
       addMessage(input, 'user');
       addMessage('Digite seu telefone (somente números, ex: 11999998888):');
       state = 12;
-      createInput('Telefone', tel => {
-        const digits = (tel||'').replace(/\D/g,'');
-        // Espera 11 dígitos (DD + 9 dígitos)
+      createInput('Telefone', function telHandler(tel) {
+        const digits = onlyDigits(tel);
         if (digits.length !== 11) {
           addMessage('Telefone inválido. Deve conter 11 dígitos (DD + 9 dígitos).');
-          // permanecer no estado 12 para tentar novamente
-          createInput('Telefone', arguments.callee); // reusa a mesma função
+          createInput('Telefone', telHandler);
           return;
         }
         const masked = `(${digits.slice(0,2)}) ${digits.slice(2,7)}-${digits.slice(7)}`;
@@ -142,60 +149,119 @@ function nextStep(input){
           addMessage(email, 'user');
           addMessage('Cadastro concluído!');
           let professores = JSON.parse(localStorage.getItem('professores') || '[]');
-          // Certificar que CPF e telefone já estão mascarados
           professores.push(professor);
           localStorage.setItem('professores', JSON.stringify(professores));
-          
-          // Após o cadastro ser concluído, avançar para o próximo passo
-          state = 2;  // Não deixar no estado de cadastro
-          askDate();  // Iniciar o processo de reserva
+          showProfessorReservations(onlyDigits(professor.cpf));
+          askSelectAmbiente();
         });
       });
-      break;
-
-    case 2:
-      addMessage(input, 'user');
-      reserva.dataFim = brToISO(input);
-      addMessage(`Data da reserva: ${input}`);
-      state = 4;
-      askQuantity();  // Pergunta a quantidade de Chromebooks
       break;
   }
 }
 
-// Função para solicitar a data da reserva
+function showProfessorReservations(cpfDigits){
+  const reservas = JSON.parse(localStorage.getItem('reservas') || '[]');
+  const matches = reservas.filter(r => {
+    if(r.cpf && onlyDigits(r.cpf) === cpfDigits) return true;
+    if(r.professor && r.professor === professor.nome) return true;
+    return false;
+  });
+
+  if(matches.length === 0){
+    addMessage('Você ainda não possui reservas registradas.');
+    return;
+  }
+
+  const grouped = {};
+  matches.forEach(r => {
+    const amb = r.ambiente || 'Chromebooks';
+    if(!grouped[amb]) grouped[amb] = [];
+    grouped[amb].push(r);
+  });
+
+  let text = 'Você já possui reserva(s):\n';
+  for(const amb in grouped){
+    grouped[amb].forEach(r => {
+      if((amb === 'Chromebooks') ){
+        text += `${amb}: ${r.quantidade || 0} em ${isoToBR(r.dataFim)} - ${ (r.horarios||[]).join(', ') }\n`;
+      } else {
+        text += `${amb}: em ${isoToBR(r.dataFim)} - ${ (r.horarios||[]).join(', ') } (Prof: ${r.professor || '---'})\n`;
+      }
+    });
+  }
+  addMessage(text);
+}
+
+function askSelectAmbiente(){
+  addMessage('Selecione o que deseja reservar:');
+  const container = document.createElement('div');
+  container.classList.add('option-container');
+  AMBIENTES.forEach(a => {
+    const btn = document.createElement('button');
+    btn.classList.add('option-btn');
+    btn.innerText = a;
+    btn.onclick = () => {
+      addMessage(a, 'user');
+      selectedAmbiente = a;
+      reserva = {quantidade: 0, dataFim:'', horarios: [], ambiente: a};
+      if(a === 'Chromebooks'){
+        askDate();
+      } else {
+        askDateAmbiente();
+      }
+    };
+    container.appendChild(btn);
+  });
+  messagesEl.appendChild(container);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
 function askDate() {
   addMessage('Digite a data da reserva (dd/mm/yyyy): Ex: 08/09/2025');
   createInput('Data da reserva', date => validateDate(date));
 }
 
-// Função para validar a data da reserva
 function validateDate(dateInput) {
   if (!validDateBR(dateInput)) {
     addMessage('Data inválida! Formato dd/mm/yyyy');
-    askDate(); 
+    askDate();
     return;
   }
-
   if (!isWeekdayBR(dateInput)) {
     addMessage('Escolha um dia útil (Seg-Sex)');
     askDate();
     return;
   }
-
   reserva.dataFim = brToISO(dateInput);
   addMessage(`Data da reserva: ${dateInput}`);
-  state = 5;
   askQuantity();
 }
 
-// Função para solicitar a quantidade de Chromebooks
+function askDateAmbiente(){
+  addMessage('Digite a data da reserva para o ambiente selecionado (dd/mm/yyyy): Ex: 08/09/2025');
+  createInput('Data da reserva', date => validateDateAmbiente(date));
+}
+function validateDateAmbiente(dateInput){
+  if (!validDateBR(dateInput)) {
+    addMessage('Data inválida! Formato dd/mm/yyyy');
+    askDateAmbiente();
+    return;
+  }
+  if (!isWeekdayBR(dateInput)) {
+    addMessage('Escolha um dia útil (Seg-Sex)');
+    askDateAmbiente();
+    return;
+  }
+  reserva.dataFim = brToISO(dateInput);
+  addMessage(`Data da reserva: ${dateInput}`);
+  askHorariosAmbiente();
+}
+
 function askQuantity() {
   addMessage('Digite a quantidade de Chromebooks que deseja reservar:');
   createInput('Quantidade de Chromebooks', quantity => validateQuantity(quantity));
 }
 
-// Função para validar a quantidade de Chromebooks
 function validateQuantity(input) {
   let num = parseInt(input);
   if (isNaN(num) || num < 1) {
@@ -203,25 +269,18 @@ function validateQuantity(input) {
     askQuantity();
     return;
   }
-
-  // Agora, a validação por disponibilidade é específica por data+horário.
-  // Antes de escolher horários, só limitamos pelo máximo físico.
   if (num > MAX_CHROMEBOOKS) {
     addMessage(`Não é possível reservar ${num} Chromebooks. Máximo por horário: ${MAX_CHROMEBOOKS}`, 'system');
     askQuantity();
     return;
   }
-
   reserva.quantidade = num;
   addMessage(`Você deseja reservar ${num} Chromebook(s).`);
-  state = 6;
   askHorarios();
 }
 
-// Função para solicitar os horários de reserva
 function askHorarios() {
   addMessage('Selecione os horários para os quais deseja reservar estes Chromebooks:');
-  const horarios = ['07:20','08:05','08:50','09:55','10:40','11:25','13:45','14:30','15:35','16:20','17:05'];
   const container = document.createElement('div');
   container.classList.add('option-container');
   reserva.horariosSelecionados = new Set();
@@ -260,27 +319,79 @@ function askHorarios() {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-// Recalcula mapa reservasPorDataHorario para uma data específica
-function buildReservasPorDataHorarioPara(dataISO) {
+function askHorariosAmbiente() {
+  addMessage(`Selecione os horários para ${selectedAmbiente} (um professor pode reservar o ambiente por horário):`);
+  const container = document.createElement('div');
+  container.classList.add('option-container');
+  reserva.horariosSelecionados = new Set();
+
+  horarios.forEach(h => {
+    const btn = document.createElement('button'); 
+    btn.classList.add('option-btn'); 
+    btn.innerText = h;
+    btn.onclick = () => {
+      if(reserva.horariosSelecionados.has(h)){
+        reserva.horariosSelecionados.delete(h);
+        btn.style.backgroundColor = '#25d366';
+      } else {
+        reserva.horariosSelecionados.add(h);
+        btn.style.backgroundColor = '#128c5e';
+      }
+    };
+    container.appendChild(btn);
+  });
+
+  const confirmarBtn = document.createElement('button'); 
+  confirmarBtn.classList.add('option-btn'); 
+  confirmarBtn.innerText = 'Confirmar horários'; 
+  confirmarBtn.style.backgroundColor = '#075E54';
+  confirmarBtn.onclick = () => {
+    if(reserva.horariosSelecionados.size === 0){
+      addMessage('Selecione pelo menos um horário');
+      return;
+    }
+    reserva.horarios = Array.from(reserva.horariosSelecionados);
+    validateHorariosDisponiveisAmbiente();
+  };
+
+  container.appendChild(confirmarBtn);
+  messagesEl.appendChild(container);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function buildReservasPorDataHorarioPara(dataISO, ambiente='Chromebooks') {
   const mapa = {};
   const reservasExistentes = JSON.parse(localStorage.getItem('reservas') || '[]');
+  const bloqueios = JSON.parse(localStorage.getItem('bloqueios') || '[]');
+
   reservasExistentes.forEach(res => {
-    if (res.dataFim === dataISO) {
+    const amb = res.ambiente || 'Chromebooks';
+    if (amb === ambiente) {
       (res.horarios || []).forEach(h => {
         const key = `${res.dataFim}-${h}`;
-        mapa[key] = (mapa[key] || 0) + (res.quantidade || 0);
+        const amount = (amb === 'Chromebooks') ? (res.quantidade || 0) : 1;
+        mapa[key] = (mapa[key] || 0) + amount;
       });
     }
   });
+
+  if(ambiente === 'Chromebooks'){
+    (bloqueios || []).forEach(b => {
+      if(b.dataFim === dataISO){
+        (b.horarios || []).forEach(h=>{
+          const key = `${b.dataFim}-${h}`;
+          mapa[key] = (mapa[key] || 0) + (b.quantidade || 0);
+        });
+      }
+    });
+  }
+
   return mapa;
 }
 
-// Função para validar os horários disponíveis
 function validateHorariosDisponiveis() {
-  // Recalcular sempre fresco
-  reservasPorDataHorario = buildReservasPorDataHorarioPara(reserva.dataFim);
+  reservasPorDataHorario = buildReservasPorDataHorarioPara(reserva.dataFim, 'Chromebooks');
 
-  // Agora, valida para cada horário selecionado
   let valid = true;
   reserva.horarios.forEach(h => {
     const key = `${reserva.dataFim}-${h}`;
@@ -293,27 +404,52 @@ function validateHorariosDisponiveis() {
   });
 
   if(valid) {
-    confirmReservation();  // Se todos os horários forem válidos, confirma a reserva
+    reserva.ambiente = 'Chromebooks';
+    confirmReservation();
   }
 }
 
-// Função para confirmar a reserva
-function confirmReservation() {
-  addMessage('Reserva confirmada!');
-  
-  // Atualiza o mapa local (em memória)
+function validateHorariosDisponiveisAmbiente() {
+  const reservasExistentes = JSON.parse(localStorage.getItem('reservas') || '[]');
+  let conflicts = [];
   reserva.horarios.forEach(h => {
-    const key = `${reserva.dataFim}-${h}`;
-    reservasPorDataHorario[key] = (reservasPorDataHorario[key] || 0) + reserva.quantidade;
+    const conflict = reservasExistentes.find(r => {
+      const amb = r.ambiente || 'Chromebooks';
+      if(amb !== selectedAmbiente) return false;
+      if(r.dataFim !== reserva.dataFim) return false;
+      if((r.horarios || []).includes(h)) return true;
+      return false;
+    });
+    if(conflict) conflicts.push(h);
   });
 
-  salvarReserva();  // Salva a reserva no localStorage
+  if(conflicts.length > 0){
+    addMessage(`Ops — os horários ${conflicts.join(', ')} já estão reservados para ${selectedAmbiente}. Selecione outros horários ou volte ao menu.`);
+    askHorariosAmbiente();
+    return;
+  }
+
+  reserva.quantidade = 1;
+  reserva.ambiente = selectedAmbiente;
+  confirmReservation();
 }
 
-// Função para salvar a reserva no Local Storage
+function confirmReservation() {
+  addMessage('Reserva confirmada!');
+  if(reserva.ambiente === 'Chromebooks'){
+    reserva.horarios.forEach(h => {
+      const key = `${reserva.dataFim}-${h}`;
+      reservasPorDataHorario[key] = (reservasPorDataHorario[key] || 0) + reserva.quantidade;
+    });
+  }
+  salvarReserva();
+  addMessage('Reserva salva com sucesso.');
+  addMessage('Deseja reservar mais alguma coisa? Se sim, selecione o ambiente.');
+  askSelectAmbiente();
+}
+
 function salvarReserva(){
   let reservas = JSON.parse(localStorage.getItem('reservas') || '[]');
-  // Criar um id único para facilitar exclusão posterior
   const id = Date.now().toString() + '-' + Math.floor(Math.random()*10000).toString();
   const resObj = {
     id,
@@ -322,13 +458,13 @@ function salvarReserva(){
     telefone: professor.telefone || '',
     quantidade: reserva.quantidade,
     dataFim: reserva.dataFim,
-    horarios: reserva.horarios
+    horarios: reserva.horarios,
+    ambiente: reserva.ambiente || 'Chromebooks'
   };
   reservas.push(resObj);
   localStorage.setItem('reservas', JSON.stringify(reservas));
 }
 
-// Funções auxiliares para validar datas e formatos
 function validDateBR(dateStr){
   const regex = /^(\d{2})\/(\d{2})\/(\d{4})$/;
   const match = dateStr.match(regex);
@@ -339,7 +475,6 @@ function validDateBR(dateStr){
   const d = new Date(ano, mes, dia);
   return d.getFullYear() === ano && d.getMonth() === mes && d.getDate() === dia;
 }
-
 function isWeekdayBR(dateStr){
   const [dia, mes, ano] = dateStr.split('/').map(Number);
   const d = new Date(ano, mes-1, dia);
@@ -347,17 +482,17 @@ function isWeekdayBR(dateStr){
   return day >= 1 && day <= 5;
 }
 
-function brToISO(dateStr){
-  const [dia, mes, ano] = dateStr.split('/');
-  return `${ano}-${mes}-${dia}`;
-}
-
-// Função para iniciar o chat (mensagem inicial e input CPF)
-// Mensagem alterada conforme solicitado
-addMessage('Olá, eu sou a Leopoldina sua assistente virtual, e vou lhe ajudar agora com as reservas de Chromebooks que precisa fazer. Para iniciar o processo de reservas, por favor, digite seu CPF:');
+addMessage('Olá, eu sou a Leopoldina sua assistente virtual, e vou lhe ajudar agora com as reservas. Para iniciar, digite seu CPF:');
 state = 0; 
 createInput('CPF (somente números)', cpfInput);
 
+// === Habilitar envio por Enter ===
+chatInput.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && !sendBtn.disabled) {
+    sendBtn.click();
+    e.preventDefault();
+  }
+});
 </script>
 
 </body>
